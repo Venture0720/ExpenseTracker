@@ -3,38 +3,41 @@
 #3. Switch of contents. 
 #4. 
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime
 from fastapi import Depends, APIRouter, HTTPException
-from auth import app, Post_expense, get_current_user, get_db
+import sqlite3 
+from auth import app, Post_expense, create_user, cursor, conn
 
 expense_router = APIRouter(prefix="/expenses", tags=["expenses"])
 
 @expense_router.post("/create")
-async def send_expense(exp: Post_expense, current_user_id: int = Depends(get_current_user), db = Depends(get_db)):
-    cursor = db.cursor()
-    now = datetime.now(timezone.utc).isoformat()
+async def send_expense(exp: Post_expense, current_user_id: int = Depends(create_user)):
+    now = datetime.now().strftime("%H:%M")
     cursor.execute(
         "INSERT INTO expense (title, price, description, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
         (exp.title, exp.price, exp.description, now, current_user_id),
     )
-    db.commit()
+    conn.commit()
     return {"message": "Expense created", "owner_id": current_user_id}
 
 @expense_router.get("/get")
-async def get_expense(current_user_id: int = Depends(get_current_user), db = Depends(get_db)):
-    cursor = db.cursor()
-    cursor.execute("SELECT * FROM expense WHERE user_id = ?", (current_user_id,))
-    result = cursor.fetchall()
-    return [dict(row) for row in result]
+async def get_expense(current_user_id: int = Depends(create_user)):
+    try:
+        cursor.execute("SELECT * FROM expense WHERE user_id = ?", (current_user_id,))
+        result = cursor.fetchall()
+        return result 
+    except sqlite3.IntegrityError:
+        raise HTTPException(code_status = 400, detail = "There is no such user")
 
 @expense_router.delete("/{expense_id}")
-async def delete_expense(expense_id: int, current_user_id: int = Depends(get_current_user), db = Depends(get_db)):
-    cursor = db.cursor()
-    cursor.execute("DELETE FROM expense WHERE expense_id = ? AND user_id = ?", (expense_id, current_user_id))
-    db.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Expense not found")
-    return {"message": "Successfully deleted"}
+async def delete_expense(expense_id: int, current_user_id: int = Depends(create_user)):
+    try:
+        cursor.execute("DELETE FROM expense WHERE expense_id = ? and user_id = ?", (expense_id, current_user_id,))
+        conn.commit()
+        return {"message": f"Successfully deleted"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(code_status = 400, detail = "There is no such user")
+
 
 
 class UpdateExpense(BaseModel):
@@ -46,10 +49,8 @@ class UpdateExpense(BaseModel):
 async def update_expense(
     expense_id: int,
     exp: UpdateExpense,
-    current_user_id: int = Depends(get_current_user),
-    db = Depends(get_db)
+    current_user_id: int = Depends(create_user),
 ):
-    cursor = db.cursor()
     updates = []
     params = []
     if exp.title is not None:
@@ -70,7 +71,7 @@ async def update_expense(
         f"UPDATE expense SET {', '.join(updates)} WHERE expense_id = ? AND user_id = ?",
         params,
     )
-    db.commit()
+    conn.commit()
     if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"message": "Updated"}

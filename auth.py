@@ -15,7 +15,7 @@ load_dotenv(dotenv_path=".gitignore/.env")
 app = FastAPI()
 security = HTTPBearer() 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+def create_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:    
         payload = jwt.decode(
@@ -46,33 +46,11 @@ def get_token(user_id: int):
     token = jwt.encode(payload, secret_key, algorithm=algorithm) 
     return token 
 
-DB_PATH = "users.db"
+conn = sqlite3.connect("users.db")
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE IF NOT EXISTS user_table (user_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT)")
+conn.commit()
 
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS user_table (user_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT)"
-        )
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS expense (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, price REAL, description TEXT, created_at TEXT, user_id INTEGER, FOREIGN KEY (user_id) REFERENCES user_table (user_id))"
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-init_db()
-
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 class Register(BaseModel):
@@ -86,37 +64,30 @@ class Login(BaseModel):
 
 @app.post("/register")
 async def get_registered(reg: Register):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    hashed = bcrypt.hashpw(reg.password.encode(), bcrypt.gensalt()) 
     try:
-        cursor = conn.cursor()
-        hashed = bcrypt.hashpw(reg.password.encode(), bcrypt.gensalt())
         cursor.execute("INSERT INTO user_table (name, email, password) VALUES (?, ?, ?)", (reg.name, reg.email, hashed))
-        conn.commit()
         user_id = cursor.lastrowid
-        token = get_token(user_id=user_id)
+        token = get_token(user_id = user_id)
         return {"message": "Success", "your_token": token}
     except sqlite3.IntegrityError:
         return {"message": "This email is already registered."}
-    finally:
-        conn.close()
 
 @app.post("/login")
 async def get_login(log: Login):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, password from user_table WHERE email = ?", (log.email,))
-        p = cursor.fetchone()
-        if p is None:
-            raise HTTPException(status_code=400, detail="Create an account first")
-        if bcrypt.checkpw(log.password.encode(), p[1]):
-            token = get_token(user_id=p[0])
+    cursor.execute("SELECT user_id, password from user_table WHERE email = ?", (log.email,))
+    p = cursor.fetchone()
+    if p is None:
+        raise HTTPException(status_code= 400, detail = "Create an account first")
+    else:
+        if bcrypt.checkpw(log.password.encode(), p[1]):  
+            token = get_token(user_id= p[0])
             return {"message": "Login successfull", "your_token": token, "token_type": "bearer"}
         return {"message": "create user first!"}
-    finally:
-        conn.close()
 
 
+cursor.execute("CREATE TABLE IF NOT EXISTS expense (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, price REAL, description TEXT, created_at TEXT, user_id INTEGER, FOREIGN KEY (user_id) REFERENCES user_table (user_id))")
+conn.commit()
 class Post_expense(BaseModel):
     title: str
     price: float 
