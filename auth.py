@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel, Field
+from pydantic.networks import EmailStr
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials 
 import sqlite3
 import bcrypt 
@@ -8,7 +9,7 @@ import jwt
 import os 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=".gitignore/.env")
 
     
 app = FastAPI()
@@ -17,7 +18,11 @@ security = HTTPBearer()
 def create_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:    
-        payload = jwt.decode(token, os.getenv("secret_key"), algorithm=os.getenv("algorithm"))
+        payload = jwt.decode(
+    token,
+    os.getenv("secret_key"),
+    algorithms=[os.getenv("algorithm")]
+)
         user_id: int = payload.get("user_id")
         if user_id is None: 
             raise HTTPException(status_code=401, detail  = "Invalid token") 
@@ -50,11 +55,11 @@ conn.commit()
 
 class Register(BaseModel):
     name: str 
-    email: str
+    email: EmailStr
     password: str = Field(min_length = 8)
 
 class Login(BaseModel):
-    email: str
+    email: EmailStr
     password: str = Field(min_length = 8)
 
 @app.post("/register")
@@ -87,13 +92,4 @@ class Post_expense(BaseModel):
     title: str
     price: float 
     description: str
-
-@app.post("/create_expense")
-async def send_expense(exp: Post_expense, current_user_id: int = Depends(create_user)):
-    now = datetime.now.strftime("%H:%M")
-    cursor.execute("INSERT INTO expense (title, price, description, created_at, user_id)", (exp.title, exp.description, now, current_user_id))
-    conn.commit()
-    return {"message": "Expense created", "owner_id": current_user_id}
-
-
 #Создать новый файл, и там сделать полный круд. 
