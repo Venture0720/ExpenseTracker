@@ -1,95 +1,82 @@
-from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel, Field
-from pydantic.networks import EmailStr
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials 
-import sqlite3
-import bcrypt 
-from datetime import datetime, timezone, timedelta
-import jwt
-import os 
-from dotenv import load_dotenv
+#1. Category of expenses 
+#2. Sorting by importance and amount (ASC, DESC)
+#3. Switch of contents. 
+#4. 
+from pydantic import BaseModel
+from datetime import datetime
+from fastapi import Depends, APIRouter, HTTPException
+import sqlite3 
+from auth import app, Post_expense, create_user, cursor, conn
 
-load_dotenv(dotenv_path=".gitignore/.env")
+expense_router = APIRouter(prefix="/expenses", tags=["expenses"])
+
+@expense_router.post("/create")
+async def send_expense(exp: Post_expense, current_user_id: int = Depends(create_user)):
+    now = datetime.now().strftime("%H:%M")
+    cursor.execute(
+        "INSERT INTO expense (title, price, description, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+        (exp.title, exp.price, exp.description, now, current_user_id),
+    )
+    conn.commit()
+    return {"message": "Expense created", "owner_id": current_user_id}
+
+@expense_router.get("/get")
+async def get_expense(current_user_id: int = Depends(create_user)):
+    try:
+        cursor.execute("SELECT * FROM expense WHERE user_id = ?", (current_user_id,))
+        result = cursor.fetchall()
+        return result 
+    except sqlite3.IntegrityError:
+        raise HTTPException(code_status = 400, detail = "There is no such user")
+
+@expense_router.delete("/{expense_id}")
+async def delete_expense(expense_id: int, current_user_id: int = Depends(create_user)):
+    try:
+        cursor.execute("DELETE FROM expense WHERE expense_id = ? and user_id = ?", (expense_id, current_user_id,))
+        conn.commit()
+        return {"message": f"Successfully deleted"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(code_status = 400, detail = "There is no such user")
+
+
+
+class UpdateExpense(BaseModel):
+    title: str | None = None 
+    price: float | None = None 
+    description: str | None = None 
+
+@expense_router.patch("/{expense_id}")
+async def update_expense(
+    expense_id: int,
+    exp: UpdateExpense,
+    current_user_id: int = Depends(create_user),
+):
+    updates = []
+    params = []
+    if exp.title is not None:
+        updates.append("title = ?")
+        params.append(exp.title)
+    if exp.price is not None:
+        updates.append("price = ?")
+        params.append(exp.price)
+    if exp.description is not None:
+        updates.append("description = ?")
+        params.append(exp.description)
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    params.extend([expense_id, current_user_id])
+    cursor.execute(
+        f"UPDATE expense SET {', '.join(updates)} WHERE expense_id = ? AND user_id = ?",
+        params,
+    )
+    conn.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return {"message": "Updated"}
 
     
-app = FastAPI()
-security = HTTPBearer() 
-
-def create_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-    try:    
-        payload = jwt.decode(
-    token,
-    os.getenv("secret_key"),
-    algorithms=[os.getenv("algorithm")]
-)
-        user_id: int = payload.get("user_id")
-        if user_id is None: 
-            raise HTTPException(status_code=401, detail  = "Invalid token") 
-        return user_id 
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code = 401, detail = "Token has expired")
-    except jwt.InvalidTokenError: 
-        raise HTTPException(status_code = 401, detail = "Invalid token")
 
 
-
-def get_token(user_id: int):
-    secret_key = os.getenv("secret_key")
-    algorithm = os.getenv("algorithm")
-    payload = {
-        "user_id": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
-        "iat": datetime.now(timezone.utc)
-    }
-
-    token = jwt.encode(payload, secret_key, algorithm=algorithm) 
-    return token 
-
-conn = sqlite3.connect("users.db")
-cursor = conn.cursor()
-cursor.execute("CREATE TABLE IF NOT EXISTS user_table (user_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT)")
-conn.commit()
-
-
-
-class Register(BaseModel):
-    name: str 
-    email: EmailStr
-    password: str = Field(min_length = 8)
-
-class Login(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length = 8)
-
-@app.post("/register")
-async def get_registered(reg: Register):
-    hashed = bcrypt.hashpw(reg.password.encode(), bcrypt.gensalt()) 
-    try:
-        cursor.execute("INSERT INTO user_table (name, email, password) VALUES (?, ?, ?)", (reg.name, reg.email, hashed))
-        user_id = cursor.lastrowid
-        token = get_token(user_id = user_id)
-        return {"message": "Success", "your_token": token}
-    except sqlite3.IntegrityError:
-        return {"message": "This email is already registered."}
-
-@app.post("/login")
-async def get_login(log: Login):
-    cursor.execute("SELECT user_id, password from user_table WHERE email = ?", (log.email,))
-    p = cursor.fetchone()
-    if p is None:
-        raise HTTPException(status_code= 400, detail = "Create an account first")
-    else:
-        if bcrypt.checkpw(log.password.encode(), p[1]):  
-            token = get_token(user_id= p[0])
-            return {"message": "Login successfull", "your_token": token, "token_type": "bearer"}
-        return {"message": "create user first!"}
-
-
-cursor.execute("CREATE TABLE IF NOT EXISTS expense (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, price REAL, description TEXT, created_at TEXT, user_id INTEGER, FOREIGN KEY (user_id) REFERENCES user_table (user_id))")
-conn.commit()
-class Post_expense(BaseModel):
-    title: str
-    price: float 
-    description: str
-#Создать новый файл, и там сделать полный круд. 
+app.include_router(expense_router)
