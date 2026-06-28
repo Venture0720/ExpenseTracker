@@ -59,7 +59,7 @@ async def delete_expense(expense_id: int, current_user_id: int = Depends(create_
         raise HTTPException(status_code = 400, detail = "There is no such user")
 
 
-
+"hui"
 class UpdateExpense(BaseModel):
     title: str | None = None 
     price: float | None = None 
