@@ -46,11 +46,21 @@ def get_token(user_id: int):
     token = jwt.encode(payload, secret_key, algorithm=algorithm) 
     return token 
 
-conn = sqlite3.connect("users.db")
-cursor = conn.cursor()
-cursor.execute("CREATE TABLE IF NOT EXISTS user_table (user_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT)")
-conn.commit()
-
+def get_db():
+    conn = sqlite3.connect("users.db", check_same_thread = False, timeout = 0.5)
+    cursor = conn.cursor()
+    try:
+        yield cursor, conn
+    finally:
+        conn.close()
+@app.on_event("startup")
+async def init_db():
+    conn = sqlite3.connect("users.db", check_same_thread = False)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_table (user_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS expense (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, price REAL, description TEXT, created_at TEXT, user_id INTEGER, FOREIGN KEY (user_id) REFERENCES user_table (user_id))")
+    conn.commit()
+    conn.close()
 
 
 class Register(BaseModel):
@@ -63,18 +73,21 @@ class Login(BaseModel):
     password: str = Field(min_length = 8)
 
 @app.post("/register")
-async def get_registered(reg: Register):
+async def get_registered(reg: Register, db = Depends(get_db)):
+    cursor, conn = db 
     hashed = bcrypt.hashpw(reg.password.encode(), bcrypt.gensalt()) 
     try:
         cursor.execute("INSERT INTO user_table (name, email, password) VALUES (?, ?, ?)", (reg.name, reg.email, hashed))
         user_id = cursor.lastrowid
         token = get_token(user_id = user_id)
+        conn.commit()
         return {"message": "Success", "your_token": token}
     except sqlite3.IntegrityError:
         return {"message": "This email is already registered."}
 
 @app.post("/login")
-async def get_login(log: Login):
+async def get_login(log: Login, db = Depends(get_db)):
+    cursor, conn = db
     cursor.execute("SELECT user_id, password from user_table WHERE email = ?", (log.email,))
     p = cursor.fetchone()
     if p is None:
@@ -85,11 +98,3 @@ async def get_login(log: Login):
             return {"message": "Login successfull", "your_token": token, "token_type": "bearer"}
         return {"message": "create user first!"}
 
-
-cursor.execute("CREATE TABLE IF NOT EXISTS expense (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, price REAL, description TEXT, created_at TEXT, user_id INTEGER, FOREIGN KEY (user_id) REFERENCES user_table (user_id))")
-conn.commit()
-class Post_expense(BaseModel):
-    title: str
-    price: float 
-    description: str
-#Создать новый файл, и там сделать полный круд. 
