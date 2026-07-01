@@ -9,13 +9,13 @@ import jwt
 import os 
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=".gitignore/.env")
+load_dotenv()
 
     
 app = FastAPI()
 security = HTTPBearer() 
 
-def create_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:    
         payload = jwt.decode(
@@ -83,7 +83,7 @@ async def get_registered(reg: Register, db = Depends(get_db)):
         conn.commit()
         return {"message": "Success", "your_token": token}
     except sqlite3.IntegrityError:
-        return {"message": "This email is already registered."}
+        raise HTTPException(status_code=400, detail="This email is already registered.")
 
 @app.post("/login")
 async def get_login(log: Login, db = Depends(get_db)):

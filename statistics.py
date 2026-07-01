@@ -1,6 +1,6 @@
 from pydantic import BaseModel 
 from fastapi import Depends, HTTPException, APIRouter
-from auth import create_user, app, get_db
+from auth import get_current_user_id, app, get_db
 from typing import Optional 
 import re
 stats_router = APIRouter(prefix = "/statistics", tags = ["statistics"])
@@ -9,7 +9,7 @@ stats_router = APIRouter(prefix = "/statistics", tags = ["statistics"])
 
 @stats_router.get("/summary")
 async def get_statistics(
-        current_user_id: int = Depends(create_user),
+        current_user_id: int = Depends(get_current_user_id),
         db = Depends(get_db),
         month: Optional[str] = None
 ):
@@ -24,8 +24,8 @@ async def get_statistics(
 
     result = cursor.fetchone()
     return {
-        "total_spending": result[0],
+        "total_spending": result[0] or 0,
         "expense_count": result[1] or 0,
-        "average_spending": result[2],
+        "average_spending": result[2] or 0,
         "period": month or "all time"
     }
